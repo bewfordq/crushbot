@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Crushbot</string>
+    <string name="service_name">Crushbot player</string>
+    <string name="service_description">Lets Crushbot touch the screen so it can play Crown Crush for you: it holds to smash the tower and lets go before cursed stones. It only acts while you have pressed Start.</string>
+</resources>

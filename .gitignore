@@ -1,0 +1,5 @@
+# Build output (./build.sh makes these; Crushbot.apk itself is kept in the repo)
+build/
+*.apk.idsig
+# The signing key build.sh generates on first run: private, never commit it
+*.keystore
