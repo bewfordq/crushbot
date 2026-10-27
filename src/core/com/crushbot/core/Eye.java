@@ -4,17 +4,53 @@ import java.util.Arrays;
 
 /**
  * Reads the tower off one frame. The geometry is the game's own (TowerView.gd): a cylinder of
- * plates 68 px tall, radius 400, squashed to 120 px deep, centred at x = 540, drawn 1:1 in screen
- * pixels. Each plate has 12 segments of 30 degrees; world angle a is drawn at
- * x = 540 + 400 cos a, so the front half (0..180 degrees) is what shows, 90 degrees in the middle.
- * The ball checks the segments at 81, 90 and 99 degrees of the plate on top.
+ * plates 68 units tall, radius 400, squashed to 120 units deep, centred across the screen. Each
+ * plate has 12 segments of 30 degrees; world angle a is drawn at x = centre + 400 cos a, so the
+ * front half (0..180 degrees) is what shows, 90 degrees in the middle. The ball checks the
+ * segments at 81, 90 and 99 degrees of the plate on top.
+ *
+ * The game draws on a 1080 x 1920 canvas stretched to fit the screen and grown to fill it
+ * (Godot's canvas_items / expand): one canvas unit is S screen pixels, S = min(width / 1080,
+ * height / 1920). On a 1080 x 2424 screen that's 1:1.
  */
 public final class Eye {
-    public static final double CX = 540, RX = 400, RY = 120, PH = 68;
-    /** Cap centre once the camera has caught up (650 + the status bar). */
-    public static final double TOP_Y = 792;
+    public static int W = 1080, H = 2424;
+    public static double S = 1, CX = 540, RX = 400, RY = 120, PH = 68;
+    /**
+     * Cap centre once the camera has caught up: 650 canvas units plus the phone's safe-area top
+     * (its status bar or camera cut-out), so it differs between phones and is measured at the
+     * start of a level (792 on a 1080 x 2424 emulator).
+     */
+    public static double TOP_Y = 792;
+    public static boolean topKnown = false;
     /** Lowest y worth reading (the crowd of little figures is below). */
-    public static final int BOTTOM = 2290;
+    public static int BOTTOM = 2290;
+
+    /** Sets the geometry for a screen of w x h pixels. */
+    public static void screen(int w, int h) {
+        if (w == W && h == H && S > 0) return;
+        W = w;
+        H = h;
+        S = Math.min(w / 1080.0, h / 1920.0);
+        CX = w / 2.0;
+        RX = 400 * S;
+        RY = 120 * S;
+        PH = 68 * S;
+        BOTTOM = (int) Math.round(h - 134 * S);
+        TOP_Y = 792 * S;
+        topKnown = false;
+    }
+
+    /** The cap's resting height, once measured. */
+    public static void top(double y) {
+        TOP_Y = y;
+        topKnown = true;
+    }
+
+    /** Canvas units to screen pixels. */
+    static double u(double v) {
+        return v * S;
+    }
     public static final int SEGS = 7; // r = -1..5: segments starting at phi + 30 r
     static final double D = Math.PI / 180;
 
@@ -59,16 +95,26 @@ public final class Eye {
     static final int[] CAP_DEG = {30, 40, 52, 64, 76, 104, 116, 128, 140, 150};
 
     public static boolean DEBUG = false;
-    static final int CAP_Y0 = 600, CAP_Y1 = 1250;
 
     /**
      * Finds the top cap (a flat ellipse of one colour) and its centre. The colour isn't fixed: a
      * smash flashes the whole screen a little, and a gold plate on top has a gold cap.
      */
     static boolean cap(Frame f, Look k) {
+        // Where to look: around the resting place once it's known, a wide band until then.
+        int CAP_Y0, CAP_Y1;
+        if (topKnown) {
+            CAP_Y0 = (int) (TOP_Y - RY - u(60));
+            CAP_Y1 = (int) (TOP_Y + 2 * PH + RY + u(60));
+        } else {
+            CAP_Y0 = (int) (H * 0.12);
+            CAP_Y1 = (int) (H * 0.62);
+        }
+        CAP_Y0 = Math.max(0, CAP_Y0);
+        CAP_Y1 = Math.min(H, CAP_Y1);
         // The cap colour: the commonest colour in two columns either side (a face band is at most
-        // 68 px of one colour there; the cap is 200).
-        int[] cols = new int[2 * (CAP_Y1 - CAP_Y0)];
+        // 68 units of one colour there; the cap is 200).
+        int[] cols = new int[2 * Math.max(1, CAP_Y1 - CAP_Y0)];
         int nc = 0;
         for (int deg : new int[] {64, 116}) {
             int x = (int) Math.round(CX + RX * Math.cos(deg * D));
@@ -88,7 +134,7 @@ public final class Eye {
             }
             i = j;
         }
-        if (best < 150) return false;
+        if (best < u(150)) return false;
         k.cap = col;
         // Each column: the cap's top and bottom edges, half a chord either side of the centre.
         // Gaps of a few pixels (impact rings, sparks) are bridged.
@@ -104,7 +150,7 @@ public final class Eye {
             int top = -1, last = -100, in = 0;
             for (int y = CAP_Y0; y < CAP_Y1; y++) {
                 if (!Frame.near(f.rgb(x, y), col, 4)) continue;
-                if (y - last > 14) {
+                if (y - last > u(14)) {
                     top = y;
                     in = 0;
                 }
@@ -117,7 +163,7 @@ public final class Eye {
                 }
             }
             if (DEBUG) System.out.printf("  cap %d: in=%d top=%d bot=%d half=%.0f -> %.1f %.1f%n", deg, bestIn, bestTop, bestBot, half, bestTop + half, bestBot + 1 - half);
-            if (bestIn < 24) continue;
+            if (bestIn < u(24)) continue;
             // Both ends give a centre; often one is hidden (flying pieces of the last plate
             // cover the back edge), so the columns vote below.
             ys[n] = bestBot + 1 - half;
@@ -129,11 +175,12 @@ public final class Eye {
         // plate flying over one side of the cap, so one side alone will do. While the game runs
         // under 26 frames a second the camera catches up within the frame: the cap rests at
         // TOP_Y, or one plate lower right after a smash; those win if any 2 columns say so.
-        for (double rest : new double[] {TOP_Y, TOP_Y + PH}) {
+        double tol = Math.max(2, u(4));
+        for (double rest : topKnown ? new double[] {TOP_Y, TOP_Y + PH} : new double[0]) {
             int used = 0, agree = 0;
             double sum = 0;
             for (int j = 0; j < n; j++)
-                if (Math.abs(ys[j] - rest) <= 4) {
+                if (Math.abs(ys[j] - rest) <= tol) {
                     agree++;
                     sum += ys[j];
                     used |= 1 << colOf[j];
@@ -151,7 +198,7 @@ public final class Eye {
             int agree = 0, used = 0;
             double sum = 0;
             for (int j = 0; j < n; j++)
-                if (Math.abs(ys[j] - ys[i]) <= 3) {
+                if (Math.abs(ys[j] - ys[i]) <= Math.max(2, u(3))) {
                     agree++;
                     sum += ys[j];
                     used |= 1 << colOf[j];
@@ -166,7 +213,7 @@ public final class Eye {
         if (bestCols < 3) return false;
         k.y0 = bestSum / bestAgree;
         k.capCols = bestAgree;
-        return k.y0 > 700 && k.y0 < 1100;
+        return k.y0 > H * 0.15 && k.y0 < H * 0.6;
     }
 
     // ------------------------------------------------------------------ stripes
@@ -230,7 +277,7 @@ public final class Eye {
 
     // ------------------------------------------------------------------ segments
 
-    static final int[] ROWS = {12, 56}; // inside a band, clear of the cursed stones' glowing dots
+    static final int[] ROWS = {12, 56}; // inside a band (canvas units), clear of the cursed stones' glowing dots
 
     /** A pixel on a plate face: cursed stone, ordinary (or gold, armour) segment, or can't tell. */
     static byte kind(int c) {
@@ -254,7 +301,7 @@ public final class Eye {
                     int x = (int) Math.round(CX + RX * Math.cos(ar));
                     double top = k.y0 + PH * j + RY * Math.sin(ar);
                     for (int row : ROWS) {
-                        int y = (int) Math.round(top + row);
+                        int y = (int) Math.round(top + u(row));
                         if (y >= BOTTOM) continue;
                         byte b = kind(f.rgb(x, y));
                         if (b == CURSED) cursed++;
@@ -286,8 +333,8 @@ public final class Eye {
                 if (inSeg < 4 || inSeg > 26) continue;
                 int x = (int) Math.round(CX + RX * Math.cos(ar));
                 double top = k.y0 + PH * j + RY * Math.sin(ar);
-                int p = f.rgb(x, (int) Math.round(top + 20));
-                int q = f.rgb(x, (int) Math.round(top + PH + 20));
+                int p = f.rgb(x, (int) Math.round(top + u(20)));
+                int q = f.rgb(x, (int) Math.round(top + PH + u(20)));
                 if (kind(p) != SAFE || kind(q) != SAFE) continue;
                 double rr = (Frame.r(q) + 1.0) / (Frame.r(p) + 1), rg = (Frame.g(q) + 1.0) / (Frame.g(p) + 1),
                         rb = (Frame.b(q) + 1.0) / (Frame.b(p) + 1);
@@ -318,7 +365,7 @@ public final class Eye {
         for (int j = plates >= 5 ? 1 : 0; j <= Math.min(4, plates - 1); j++)
             for (int deg = 45; deg <= 135; deg += 18) {
                 double ar = deg * D;
-                int c = f.rgb((int) Math.round(CX + RX * Math.cos(ar)), (int) Math.round(y0 + PH * j + RY * Math.sin(ar) + 20));
+                int c = f.rgb((int) Math.round(CX + RX * Math.cos(ar)), (int) Math.round(y0 + PH * j + RY * Math.sin(ar) + u(20)));
                 if (Frame.max(c) < 62) continue; // cursed stone
                 sats[n] = Frame.sat(c);
                 lums[n++] = Frame.lum(c);
@@ -331,24 +378,28 @@ public final class Eye {
     }
 
     /**
-     * The fever bar: orange (ff7a1f) from x = 140 across up to 800 px, at y 348..360. A full bar
-     * starts the fever: for a while cursed stones don't count.
+     * The fever bar: orange (ff7a1f), 14 units tall, 437 units above the cap's resting centre
+     * (both sit below the safe-area top), from 140 units in from the left edge to 140 from the
+     * right. A full bar starts the fever: for a while cursed stones don't count.
      */
     static double fever(Frame f) {
         // Score pop-ups and flying coins cross the bar: take the furthest point up to which at
         // least 70% of it is orange, in any of three rows.
+        double x0 = u(140), x1 = W - u(140);
+        int yc = (int) Math.round(TOP_Y - u(437)), dy = (int) Math.max(1, Math.round(u(4)));
+        int step = (int) Math.max(2, Math.round(u(4)));
         int n = 0, orange = 0, end = -1;
-        for (int x = 142; x <= 938; x += 4) {
+        for (int x = (int) x0 + 2; x <= x1 - 2; x += step) {
             n++;
             boolean o = false;
-            for (int y = 350; y <= 358 && !o; y += 4) o = Frame.near(f.rgb(x, y), 0xff7a1f, 40);
+            for (int y = yc - dy; y <= yc + dy && !o; y += dy) o = Frame.near(f.rgb(x, y), 0xff7a1f, 40);
             if (o) {
                 orange++;
                 if (orange >= 0.7 * n) end = x;
             }
         }
-        if (end < 0) return Frame.near(f.rgb(141, 354), 0xff7a1f, 60) || n == 0 ? 0 : -1;
-        return Math.min(1, (end + 2 - 140) / 800.0);
+        if (end < 0) return Frame.near(f.rgb((int) x0 + 1, yc), 0xff7a1f, 60) || n == 0 ? 0 : -1;
+        return Math.min(1, (end + 2 - x0) / (x1 - x0));
     }
 
     /**
@@ -359,11 +410,12 @@ public final class Eye {
     static boolean shifted(Frame f, Look k) {
         int y = (int) Math.round(k.y0);
         int spill = 0, right = 0;
-        for (int dy = -24; dy <= 24; dy += 12) {
-            for (int x : new int[] {108, 122})
-                if (Frame.near(f.rgb(x, y + dy), k.cap, 4)) spill++;
-            for (int x : new int[] {920, 932})
-                if (Frame.near(f.rgb(x, y + dy), k.cap, 6)) right++;
+        for (int i = -2; i <= 2; i++) {
+            int yy = (int) Math.round(y + i * u(12));
+            for (double dx : new double[] {-432, -418})
+                if (Frame.near(f.rgb((int) Math.round(CX + u(dx)), yy), k.cap, 4)) spill++;
+            for (double dx : new double[] {380, 392})
+                if (Frame.near(f.rgb((int) Math.round(CX + u(dx)), yy), k.cap, 6)) right++;
         }
         return spill >= 6 && right == 0;
     }
@@ -379,17 +431,18 @@ public final class Eye {
      */
     static int remaining(Frame f, double y0) {
         int[] top = new int[2];
-        int[] xs = {108, 972};
+        int[] xs = {(int) Math.round(CX - u(432)), (int) Math.round(CX + u(432))};
+        int d2 = (int) Math.max(1, Math.round(u(2)));
         for (int i = 0; i < 2; i++) {
             top[i] = -1;
-            for (int y = (int) y0 + 40; y < f.h() - 4; y++)
-                if (gold(f.rgb(xs[i], y)) && gold(f.rgb(xs[i], y + 2)) && gold(f.rgb(xs[i], y + 4))) {
+            for (int y = (int) (y0 + u(40)); y < f.h() - 2 * d2; y++)
+                if (gold(f.rgb(xs[i], y)) && gold(f.rgb(xs[i], y + d2)) && gold(f.rgb(xs[i], y + 2 * d2))) {
                     top[i] = y;
                     break;
                 }
         }
-        if (top[0] < 0 || top[1] < 0 || Math.abs(top[0] - top[1]) > 8) return -1;
-        double endY = (top[0] + top[1]) / 2.0 + 25.5;
+        if (top[0] < 0 || top[1] < 0 || Math.abs(top[0] - top[1]) > u(8)) return -1;
+        double endY = (top[0] + top[1]) / 2.0 + u(25.5);
         return (int) Math.max(1, Math.round((endY - y0) / PH));
     }
 
@@ -399,12 +452,14 @@ public final class Eye {
      */
     static long checksum(Frame f) {
         long h = 1125899906842597L;
-        for (int y = 640; y < 2000; y += 46)
-            for (int x = 150; x < 940; x += 56) h = 31 * h + f.rgb(x, y);
+        int dy = (int) Math.max(8, u(46)), dx = (int) Math.max(8, u(56));
+        for (int y = (int) (TOP_Y - u(152)); y < H * 0.82; y += dy)
+            for (int x = (int) (CX - u(390)); x < CX + u(400); x += dx) h = 31 * h + f.rgb(x, y);
         return h;
     }
 
     public static Look read(Frame f) {
+        screen(f.w(), f.h());
         Look k = new Look();
         k.t = f.t();
         k.sum = checksum(f);

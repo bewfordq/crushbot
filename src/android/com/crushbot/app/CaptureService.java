@@ -72,7 +72,10 @@ public final class CaptureService extends Service {
         }, handler);
         Rect b = getSystemService(WindowManager.class).getMaximumWindowMetrics().getBounds();
         // A smaller copy of the screen: the emulator pays for every byte it copies out of its GPU.
-        scale = getSharedPreferences("crushbot", MODE_PRIVATE).getFloat("capScale", 0.5f);
+        // Half size on a 1080-wide screen; at least 540 px across on smaller ones (the tower's
+        // segments get too thin to read below that).
+        float auto = Math.min(1f, Math.max(0.5f, 540f / Math.max(1, b.width())));
+        scale = getSharedPreferences("crushbot", MODE_PRIVATE).getFloat("capScale", auto);
         fullW = b.width();
         fullH = b.height();
         w = Math.round(fullW * scale);

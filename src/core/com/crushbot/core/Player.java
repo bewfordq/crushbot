@@ -38,6 +38,11 @@ final class Player {
     final double[] periods = new double[12];
     int np;
     int frames, smashes, resets;
+    double pendingW = Double.NaN;
+    /** This frame surely shows one smash: the camera dropped a plate and the shade flipped. */
+    boolean sureSmash;
+    boolean doubt;
+    int doubtRun;
     int lastSm = -1;
     boolean lastHeld;
     String note = "";
@@ -68,6 +73,8 @@ final class Player {
 
     void reset() {
         if (prev != null) resets++;
+        pendingW = Double.NaN;
+        doubt = false;
         fever = false;
         feverLevel = -1;
         plates.clear();
@@ -98,7 +105,7 @@ final class Player {
     }
 
     boolean smashed(Eye.Look a, Eye.Look k) {
-        boolean lag = k.y0 - Eye.TOP_Y > 30 && k.y0 - a.y0 > -8;
+        boolean lag = k.y0 - Eye.TOP_Y > Eye.u(30) && k.y0 - a.y0 > -Eye.u(8);
         if (a.parity >= 0 && k.parity >= 0) return a.parity != k.parity;
         return lag;
     }
@@ -219,8 +226,9 @@ final class Player {
         double gt = (gt0 + gt1) / 2;
         // Plates smashed meanwhile: at most one a frame; the top plate's shade (odd or even)
         // and the camera (68 px low right after a smash) narrow it down.
-        boolean lagSmash = k.y0 - Eye.TOP_Y > 30 && k.y0 - prev.y0 > -8;
+        boolean lagSmash = k.y0 - Eye.TOP_Y > Eye.u(30) && k.y0 - prev.y0 > -Eye.u(8);
         int flip = prev.parity >= 0 && k.parity >= 0 ? (prev.parity != k.parity ? 1 : 0) : -1;
+        sureSmash = nf == 1 && lagSmash && flip == 1;
         // The fever bar grows 0.085 a smash (with no fever on, and no bounce to drain it: the
         // finger stayed down). The bar is drawn before the tower in each frame, so it tells the
         // smashes of the interval before this one: a late check on that count.
@@ -235,7 +243,8 @@ final class Player {
             }
         }
         double base = wrap30(k.phi - prev.phi);
-        double reach = 230 * gt1 + 20; // the fastest towers turn about 200 degrees a game second
+        // The fastest towers turn 3.43 radians (197 degrees) a game second: nothing beyond that.
+        double reach = 205 * gt1 + 4;
         double best = -1e9, second = -1e9, bestD = base;
         int bestS = 0;
         for (int sm = 0; sm <= nf + 2; sm++) {
@@ -251,9 +260,10 @@ final class Player {
                 double sc = match(k, b + sm, theta + d) - pen;
                 if (Double.isNaN(omega)) sc -= Math.abs(d) / 40;
                 else {
+                    // Towers turn steadily: the better known the speed, the more a jump costs.
                     double e0 = omega * gt0, e1 = omega * gt1;
                     double off = Math.max(0, Math.max(Math.min(e0, e1) - d, d - Math.max(e0, e1)));
-                    sc -= off / 12;
+                    sc -= off / (omegaVotes >= 5 ? 8 : 12);
                 }
                 if (sc > best) {
                     second = best;
@@ -278,20 +288,35 @@ final class Player {
         double w = d / (m * gameTime(dt / m));
         boolean sure = best - second >= 1.5;
         if (gt0 > 0.01) {
-            if (Double.isNaN(omega) || Math.abs(w - omega) > 40) {
+            if (Double.isNaN(omega)) {
                 omega = w;
                 omegaVotes = sure ? 1 : 0;
+            } else if (Math.abs(w - omega) > 40) {
+                // A new speed (a stage, frost, the winds decree) or a misstep: believed when two
+                // frames in a row say so. Until then the bot doesn't hold.
+                if (!Double.isNaN(pendingW) && Math.abs(w - pendingW) <= 25) {
+                    omega = w;
+                    omegaVotes = sure ? 1 : 0;
+                    pendingW = Double.NaN;
+                } else pendingW = w;
             } else {
                 omega = 0.6 * omega + 0.4 * w;
                 if (sure) omegaVotes++;
+                pendingW = Double.NaN;
             }
         }
         int[] cg = contradictions(k);
         int bad = cg[0];
+        // A frame that fits what's remembered badly whichever way it's turned: the map or the
+        // count is off. Don't hold on it; a few in a row and the map starts over.
+        doubt = frames > 6 && (best < -1.5 || bad >= 3);
+        doubtRun = doubt ? doubtRun + 1 : 0;
         note = String.format("dt=%.0f%s d=%.1f (%.1f vs %.1f) w=%.0f b=%d%s%s", dt * 1000, nf > 1 ? "/" + nf : "", d,
                 best, second, omega, b, bestS > 0 ? " SMASH" + (bestS > 1 ? "x" + bestS : "") : "",
-                bad > 0 ? " contra=" + bad : "") + (fever ? " FEVER" : "") + fix;
-        if (bad >= 6 && bad * 4 >= cg[1]) {
+                bad > 0 ? " contra=" + bad : "") + (fever ? " FEVER" : "") + fix + (doubt ? " DOUBT" : "")
+                + (!Double.isNaN(pendingW) ? String.format(" new-speed?%.0f", pendingW) : "");
+        if ((bad >= 6 && bad * 4 >= cg[1]) || doubtRun >= 4) {
+            doubtRun = 0;
             // A new stage (rotation and plates start over), or tracking went wrong: start afresh.
             reset();
             theta = k.phi;
@@ -342,15 +367,16 @@ final class Player {
     boolean wantHold(boolean down) {
         if (prev == null) return false;
         if (feverHolds()) return true;
-        if (Double.isNaN(omega) || omegaVotes < 2) return false;
+        if (Double.isNaN(omega) || omegaVotes < 2 || !Double.isNaN(pendingW) || doubt) return false;
         double lo = periodLo(), hi = periodHi();
-        // Frames before the touch lands: each smashes a plate while held (surely, if frames are
-        // slower than the game's 75 ms between smashes; maybe, if faster).
-        boolean certain = lo >= 0.08;
+        // Frames before the touch lands smash plates while held: one every 75 ms of game time
+        // at the start of a run (43 ms with a long combo), at most one a frame. On a slow device
+        // that's exactly one a frame; at 60 frames a second, one every few frames.
+        int pend = delay - 1;
         int pMin = b, pMax = b;
         if (down) {
-            pMax += delay - 1;
-            if (certain) pMin += delay - 1;
+            pMax += (int) Math.min(pend, Math.ceil(pend * gameTime(hi) / 0.043));
+            pMin += (int) Math.min(pMax - b, Math.floor(pend * gameTime(lo) / 0.0834 + 1e-9));
         }
         double t0 = delay * gameTime(lo) * 0.95, t1 = delay * gameTime(hi) * 1.06;
         // The last six plates of a tower go in slow motion (62% speed): allow for either.

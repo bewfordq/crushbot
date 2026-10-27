@@ -22,10 +22,12 @@ The simplest way to get it: download [`Crushbot.apk`](Crushbot.apk) from this re
 
 ### What you need
 
-- An Android phone or emulator on **Android 11 or newer**.
+- An Android phone or emulator on **Android 11 or newer**, in portrait.
 - Crown Crush installed.
-- A screen **1080 pixels wide**. The bot reads the tower in screen pixels; it was built and tested
-  on a 1080 x 2424 emulator. Other sizes will need the numbers at the top of `Eye.java` changed.
+
+Any screen size works: the bot works out the game's scale from the screen, and measures where the
+tower sits at the start of each level (that depends on the phone's status bar or camera cut-out).
+It was tested on emulator screens of 1080 x 2424, 1080 x 2160 and 720 x 1616.
 
 ### Install
 
@@ -78,8 +80,11 @@ included here):
 
 What the bot does with that:
 
-- **Reading.** The tower is drawn 1:1 on screen: centre x = 540, radius 400, plates 68 px apart.
-  The top plate's cap is a flat ellipse, and its edges give the tower's height. The two
+- **Reading.** The game draws on a 1080 x 1920 canvas, scaled to fit the screen's width (or
+  height, on wide screens) and grown to fill the rest. On that canvas the tower is centred, with
+  a radius of 400 and plates 68 apart. The top plate's cap is a flat ellipse, and its edges give
+  the tower's height. Where the cap rests is measured at the start of each level, with the finger
+  up. The two
   alternating segment shades give the rotation (modulo 30°). Each visible plate's segments read as
   cursed (very dark) or not. Odd plates are drawn 12% darker, so the top plate's shade shows when
   one was smashed.
@@ -88,11 +93,17 @@ What the bot does with that:
   because one frame can turn the tower further than a segment. That way pieces of smashed plates
   flying across the front, or curses hidden until they're near the top (the *Night Curse*
   decree), don't fool it.
-- **Timing.** A touch sent right after a frame takes effect two game frames later (measured). So
-  after each frame the bot decides about the frame after next. It holds only if the plate that
-  will be on top then is safe at every angle the tower can have turned to by then, with 4° to
-  spare. On a slow device the game moves on at most 8/60 s per frame (the Godot engine's limit),
-  so every frame turns the tower by the same angle.
+- **Timing.** A touch takes a few game frames to reach the game: two on a slow emulator, more on
+  a phone running at 60 frames a second. The bot measures it while playing: a smash that still
+  shows k frames after letting go means the touch took more than k. So after each frame it
+  decides about the frame the touch will land in. It holds only if the plate that will be on top
+  then is safe at every angle the tower can have turned to by then, with 4° to spare. On a slow
+  device the game moves on at most 8/60 s per frame (the Godot engine's limit), so every frame
+  turns the tower by the same angle.
+- **Keeping track.** No tower turns faster than about 200° a second, so faster readings are
+  misreadings. A sudden change of speed (a new stage, frost, the *Turning Winds* decree) is only
+  believed when two frames in a row agree, and the bot doesn't hold until then. A frame that
+  doesn't fit the map at all makes it let go, and a few in a row make it start the map afresh.
 - **Fever.** A full fever bar makes the ball unstoppable for 3.2 s. The bot holds straight through
   it and stops before the bar runs out. It only trusts a fever once the bar has been full and has
   started to drain, because a bar that stops just short of full is still charging.
@@ -172,7 +183,8 @@ later runs; `""` resets them):
 | `verbose` | log every frame: rotation, plates smashed, what it read, hold or not |
 | `saveScreens` | keep pictures of the screens it pressed on, and of odd frames, in `/sdcard/Android/data/com.crushbot.app/files/debug/` |
 
-`--ef capScale 0.5` sets the capture size (half the screen by default).
+`--ef capScale 0.5` sets the capture size as a fraction of the screen (by default half, but at
+least 540 pixels across; `--ef capScale 0` goes back to that).
 
 On the PC, `Dev look` reads screenshots the way the bot does:
 
@@ -207,7 +219,9 @@ Crushbot.apk              the built app
   **⋮** > **Allow restricted settings**, then turn it on again.
 - **Start does nothing**: the screen share was declined. Press Start again and choose **Entire
   screen**.
-- **The bot never holds**: check the screen is 1080 pixels wide (`adb shell wm size`).
+- **The bot never holds**: the log should say *the tower's top rests at y …* soon after a level
+  starts. If it doesn't, turn on `saveScreens` and send a screenshot from the debug folder along
+  with the phone's model.
 - **The bot is stuck on a screen**: turn on `saveScreens` and look at the newest picture in the
   debug folder. Anything it doesn't recognise, it waits on, then presses back.
 - **It's slow**: the bot is as fast as the game's frame rate. Close apps running in the background.

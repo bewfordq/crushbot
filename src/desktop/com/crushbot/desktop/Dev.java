@@ -35,6 +35,11 @@ public final class Dev {
             Eye.DEBUG = System.getenv("DEBUG") != null;
             for (int i = 1; i < a.length; i++) {
                 Img im = load(new File(a[i]));
+                // Screenshots of the 1080 x 2424 test emulator: its resting top is known.
+                com.crushbot.core.Eye.screen(im.w, im.h);
+                String top = System.getenv("TOP");
+                if (top != null) com.crushbot.core.Eye.top(Double.parseDouble(top));
+                else if (im.w == 1080 && im.h == 2424) com.crushbot.core.Eye.top(792);
                 long t0 = System.nanoTime();
                 Eye.Look k = Eye.read(im);
                 long us = (System.nanoTime() - t0) / 1000;

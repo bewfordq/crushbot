@@ -92,7 +92,9 @@ public final class Bot {
 
     void log(String s) { out.log(s); }
 
-    static final int TOUCH_X = 540, TOUCH_Y = 1500;
+    /** Where the finger goes down: the middle of the tower, well below the buttons. */
+    static int touchX() { return (int) Eye.CX; }
+    static int touchY() { return (int) Math.round(Eye.H * 0.62); }
 
     public void run() {
         out.state("playing");
@@ -118,19 +120,47 @@ public final class Bot {
     final Player pl = new Player();
     boolean down;
     long lastT, downAt, lastSmashT, offSince, lastScreenAt, lastFrameAt = System.currentTimeMillis();
-    int missed, weak;
+    int missed, weak, weakRun, nTops;
+    final double[] tops = new double[3];
 
     /** The finger has been down long enough to have held through the previous frame too. */
     boolean heldSince(long t) {
-        return down && t - downAt > 2 * pl.periodHi() * 1e9;
+        return down && t - downAt > pl.delay * pl.periodHi() * 1e9;
     }
 
     void press(boolean want) {
         if (want == down) return;
-        if (want) dev.down(TOUCH_X, TOUCH_Y);
+        if (want) dev.down(touchX(), touchY());
         else dev.up();
         down = want;
         if (want) downAt = System.nanoTime();
+        else upFrame = frameNo;
+    }
+
+    /**
+     * Frames between sending a touch and the game acting on it: 2 on a slow emulator, more on a
+     * phone running at 60 frames a second. Measured while playing: a smash that still shows k
+     * frames after letting go means the release hadn't landed yet, so the delay is over k.
+     */
+    int frameNo, upFrame = -1000, seenDelay;
+
+    final int[] delaySeen = new int[8];
+
+    void learnDelay() {
+        // Only sure smashes, on frames that fit the map: a misread one would make the bot wait
+        // for nothing (or worse).
+        if (!pl.sureSmash || pl.doubt || down || upFrame < 0) return;
+        int k = frameNo - upFrame;
+        if (k < 1 || k > 6) return;
+        delaySeen[k]++;
+        int d = cfg.delay;
+        for (int i = 1; i <= 6; i++)
+            if (delaySeen[i] >= 2) d = Math.max(d, i + 1);
+        if (d > seenDelay) {
+            seenDelay = d;
+            if (d > cfg.delay) log("a touch takes " + d + " frames to reach the game here");
+        }
+        pl.delay = Math.max(cfg.delay, seenDelay);
     }
 
     void play() throws Exception {
@@ -177,20 +207,48 @@ public final class Bot {
             offSince = 0;
             unknownSince = 0;
             if (pl.prev != null && k.sum == pl.prev.sum) continue; // the same game frame again
+            if (!Eye.topKnown) {
+                // Where the tower's top rests depends on the phone (its status bar or camera
+                // cut-out): with the finger up, three readings in a row that agree tell.
+                press(false);
+                if (k.capCols >= 4) {
+                    tops[nTops++ % tops.length] = k.y0;
+                    if (nTops >= 3) {
+                        double lo = Math.min(tops[0], Math.min(tops[1], tops[2]));
+                        double hi = Math.max(tops[0], Math.max(tops[1], tops[2]));
+                        if (hi - lo <= Math.max(2, Eye.u(2))) {
+                            Eye.top((tops[0] + tops[1] + tops[2]) / 3);
+                            log(String.format("screen %dx%d (scale %.2f): the tower's top rests at y %.0f", Eye.W, Eye.H,
+                                    Eye.S, Eye.TOP_Y));
+                        }
+                    }
+                }
+                continue;
+            }
             if (!k.atRest && pl.medianPeriod() >= 0.045) {
                 // Under ~22 frames a second the camera always rests at one of two heights; any
                 // other reading means pieces of plates hid the cap. Skip the frame, finger up.
+                // Many in a row: the resting height was measured wrong; measure again.
                 weak++;
+                if (++weakRun >= 12) {
+                    log("the tower's top isn't where it was measured: measuring again");
+                    Eye.topKnown = false;
+                    nTops = 0;
+                    weakRun = 0;
+                }
                 press(false);
                 continue;
             }
+            weakRun = 0;
             pl.see(k, down && heldSince(k.t));
+            frameNo++;
             if (pl.note.contains("start over") && cfg.saveScreens) saveFrame("start-over");
             boolean smashed = pl.note.contains("SMASH");
+            learnDelay();
             if (smashed) {
                 lastSmashT = k.t;
                 missed = 0;
-            } else if (down && k.t - downAt > (cfg.delay + 0.5) * pl.periodHi() * 1e9) {
+            } else if (down && k.t - downAt > (pl.delay + 0.5) * pl.periodHi() * 1e9) {
                 // Held long enough that this frame should have smashed (if the game took the
                 // touch: after a forgiven cursed stone or a new stage it waits for a new press).
                 if (pl.periodLo() >= 0.08) missed++;
@@ -221,6 +279,9 @@ public final class Bot {
                     pl.frames, weak, pl.resets));
         weak = 0;
         pl.reset();
+        Eye.topKnown = false; // measured again on the next tower
+        nTops = 0;
+        weakRun = 0;
         pl.smashes = 0;
         pl.frames = 0;
         pl.resets = 0;
@@ -263,8 +324,11 @@ public final class Bot {
         }
         if (k != null && k.pale) {
             if (main != null) {
-                stats.levels++;
-                log(String.format("level won (%d so far): pressing the next level %s", stats.levels, main));
+                // (Only a tower the bot played counts: it may start on a won screen.)
+                if (pl.frames > 0) {
+                    stats.levels++;
+                    log(String.format("level won (%d so far): pressing the next level %s", stats.levels, main));
+                } else log("pressing the next level " + main);
                 save(im, "won");
                 dev.tap(main.cx(), main.cy());
             } else if (Screens.lostHeadline(im)) {
@@ -298,7 +362,8 @@ public final class Bot {
         if (Screens.streakSeal(im)) {
             log("daily streak: stamping the seal");
             save(im, "streak");
-            dev.tap(540, 812);
+            int[] at = Screens.seal();
+            dev.tap(at[0], at[1]);
             Thread.sleep(1500);
             unknownSince = 0;
             newTower();
@@ -375,7 +440,7 @@ public final class Bot {
                 if (k0 != null) last = k0.t;
             }
             boolean down = cycle % 2 == 0;
-            if (down) dev.down(TOUCH_X, TOUCH_Y);
+            if (down) dev.down(touchX(), touchY());
             else dev.up();
             long cmd = System.nanoTime();
             StringBuilder sb = new StringBuilder(String.format("probe %s %.0f ms after frame:", down ? "DOWN" : "UP",
@@ -390,7 +455,7 @@ public final class Bot {
                     sb.append(" -");
                     continue;
                 }
-                boolean smash = (par >= 0 && k.parity >= 0 && k.parity != par) || (k.y0 - Eye.TOP_Y > 30 && k.y0 - y > -8);
+                boolean smash = (par >= 0 && k.parity >= 0 && k.parity != par) || (k.y0 - Eye.TOP_Y > Eye.u(30) && k.y0 - y > -Eye.u(8));
                 sb.append(String.format(" f%d@%.0f%s", f, (k.t - cmd) / 1e6, smash ? "*" : ""));
                 if (k.parity >= 0) par = k.parity;
                 y = k.y0;

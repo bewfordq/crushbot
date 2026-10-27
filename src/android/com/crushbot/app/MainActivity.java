@@ -185,9 +185,11 @@ public final class MainActivity extends Activity {
             prefs.edit().putInt("maxLevels", i.getIntExtra("levels", 0)).apply();
             i.removeExtra("levels");
         }
-        // Capture size as a fraction of the screen: --ef capScale 0.5
+        // Capture size as a fraction of the screen: --ef capScale 0.5 (0 = automatic)
         if (i != null && i.hasExtra("capScale")) {
-            prefs.edit().putFloat("capScale", i.getFloatExtra("capScale", 0.5f)).apply();
+            float cs = i.getFloatExtra("capScale", 0f);
+            if (cs <= 0) prefs.edit().remove("capScale").apply();
+            else prefs.edit().putFloat("capScale", cs).apply();
             i.removeExtra("capScale");
         }
         if (i != null && i.hasExtra("tune")) {

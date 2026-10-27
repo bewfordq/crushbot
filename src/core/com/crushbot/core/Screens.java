@@ -61,7 +61,7 @@ final class Screens {
             }
             Box bx = new Box(minX * st, minY * st, (maxX + 1) * st, (maxY + 1) * st);
             // Mostly orange (the white label takes some), button-sized.
-            if (bx.w() < 150 || bx.h() < 70 || bx.h() > 260) continue;
+            if (bx.w() < Eye.u(150) || bx.h() < Eye.u(70) || bx.h() > Eye.u(260)) continue;
             if (n * st * st < 0.45 * bx.w() * bx.h()) continue;
             out.add(bx);
         }
@@ -72,18 +72,24 @@ final class Screens {
     static Box mainButton(List<Box> bs) {
         Box best = null;
         for (Box b : bs)
-            if (b.w() >= 480 && b.h() >= 130 && (best == null || b.w() * b.h() > best.w() * best.h())) best = b;
+            if (b.w() >= Eye.u(480) && b.h() >= Eye.u(130) && (best == null || b.w() * b.h() > best.w() * best.h())) best = b;
         return best;
     }
 
     /**
      * The daily streak's "Stamp the royal seal" screen: a crown with three red jewels in a
-     * circle, at (540, 812). Tapping it stamps the seal.
+     * circle, centred 24% of the way down the screen plus 230 units ((540, 812) on 1080 x 2424).
+     * Tapping it stamps the seal.
      */
     static boolean streakSeal(Frame f) {
-        for (int x : new int[] {464, 539, 614})
-            if (!Frame.near(f.rgb(x, 859), 0xe05a4e, 22)) return false;
+        int y = (int) Math.round(Eye.H * 0.24 + Eye.u(277));
+        for (double dx : new double[] {-75, 0, 75})
+            if (!Frame.near(f.rgb((int) Math.round(Eye.CX + Eye.u(dx)), y), 0xe05a4e, 22)) return false;
         return true;
+    }
+
+    static int[] seal() {
+        return new int[] {(int) Eye.CX, (int) Math.round(Eye.H * 0.24 + Eye.u(230))};
     }
 
     /**
@@ -91,25 +97,28 @@ final class Screens {
      * "Start fresh" 190 px below it. Returns where "Start fresh" is, or null.
      */
     static int[] startFresh(List<Box> bs) {
+        double at = Eye.H * 0.6;
         for (Box b : bs)
-            if (b.y0 > 1420 && b.y0 < 1490) return new int[] {540, b.y0 + 190 + 50};
+            if (b.y0 > at - Eye.u(34) && b.y0 < at + Eye.u(36))
+                return new int[] {(int) Eye.CX, (int) Math.round(b.y0 + Eye.u(240))};
         return null;
     }
 
-    /** "Smashed by the curse!": white letters outlined in purple (7a3fd0) around y 900..1250. */
+    /** "Smashed by the curse!": white letters outlined in purple (7a3fd0), a little above the middle. */
     static boolean lostHeadline(Frame f) {
         int n = 0;
-        for (int y = 880; y < 1260; y += 3)
-            for (int x = 150; x < 930; x += 3)
+        double mid = Eye.H / 2.0;
+        for (int y = (int) (mid - Eye.u(332)); y < mid + Eye.u(48); y += 3)
+            for (int x = (int) (Eye.CX - Eye.u(390)); x < Eye.CX + Eye.u(390); x += 3)
                 if (Frame.near(f.rgb(x, y), 0x7a3fd0, 28)) n++;
-        return n >= 60;
+        return n >= 60 * Eye.S * Eye.S;
     }
 
     /** The screen darkened all over (the decree and song cards dim the game behind them). */
     static boolean darkVeil(Frame f) {
         int dark = 0, n = 0;
-        for (int y = 400; y < 2200; y += 60)
-            for (int x : new int[] {20, 60, 1020, 1060}) {
+        for (int y = (int) (Eye.H * 0.165); y < Eye.H * 0.9; y += Math.max(20, (int) Eye.u(60)))
+            for (int x : new int[] {20, 60, Eye.W - 60, Eye.W - 20}) {
                 n++;
                 if (Frame.lum(f.rgb(x, y)) < 90) dark++;
             }
@@ -117,13 +126,16 @@ final class Screens {
     }
 
     /**
-     * Where "Restart tower" is on the lost screen. The screen is a centred column (40 px apart):
-     * the headline, the percentage, the video button if there is one, and the restart pill
-     * (about 300 x 96). Without the video button its middle is at y 1326.
+     * Where "Restart tower" is on the lost screen. The screen is a column centred on the screen
+     * (40 units apart): the headline, the percentage, the video button if there is one, and the
+     * restart pill (about 300 x 96). Without the video button its middle is 114 units below the
+     * screen's middle.
      */
     static int[] restart(List<Box> bs) {
+        double mid = Eye.H / 2.0;
         for (Box b : bs)
-            if (b.cy() > 900 && b.cy() < 1500) return new int[] {540, b.y1 + 40 + 48};
-        return new int[] {540, 1326};
+            if (b.cy() > mid - Eye.u(312) && b.cy() < mid + Eye.u(288))
+                return new int[] {(int) Eye.CX, (int) Math.round(b.y1 + Eye.u(88))};
+        return new int[] {(int) Eye.CX, (int) Math.round(mid + Eye.u(114))};
     }
 }
